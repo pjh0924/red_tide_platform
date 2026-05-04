@@ -10,8 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from data_pipeline.features import build_features
+from data_pipeline.features import build_features, load_koem_measurements
 from data_pipeline.labels import build_daily_labels
+from data_pipeline.realtime import realtime_summary
 from data_pipeline.regions import REGIONS, STATION_TO_REGION
 from model_v2 import HORIZONS, RedTideRiskModel, risk_color, risk_level
 from stations import STATIONS, get_station
@@ -28,10 +29,11 @@ app.add_middleware(
 _model: RedTideRiskModel | None = None
 _features: pd.DataFrame | None = None
 _labels: pd.DataFrame | None = None
+_measurements: pd.DataFrame | None = None   # KOEM raw 측정점 (forward-fill 안 함)
 
 
 def _load():
-    global _model, _features, _labels
+    global _model, _features, _labels, _measurements
     if _model is None:
         if not MODEL_PATH.exists():
             raise HTTPException(503, "모델 미학습. `python train_v2.py` 실행 필요.")
@@ -43,6 +45,11 @@ def _load():
             _labels = build_daily_labels(2010, datetime.now().year)
         except FileNotFoundError:
             _labels = None
+    if _measurements is None:
+        try:
+            _measurements = load_koem_measurements()
+        except FileNotFoundError:
+            _measurements = None
 
 
 def _region_today_features(region: str) -> pd.DataFrame:
@@ -104,19 +111,31 @@ def region_forecast(region: str):
 
 
 @app.get("/api/regions/{region}/observations")
-def region_observations(region: str, days: int = 90):
-    """해당 region의 KOEM 관측 시계열."""
+def region_observations(region: str, days: int = 730):
+    """해당 region 의 KOEM 실제 측정점 시계열 (분기/월 단위, forward-fill 없음)."""
     _load()
     if region not in REGIONS:
         raise HTTPException(404, f"region '{region}' 없음")
+    if _measurements is None:
+        return []
     cutoff = pd.Timestamp(datetime.now().date()) - timedelta(days=days)
-    sub = _features[(_features["region"] == region) & (_features["date"] >= cutoff)].copy()
-    sub = sub.dropna(subset=["sst"])  # 결측일 제외
+    sub = _measurements[
+        (_measurements["region"] == region) & (_measurements["date"] >= cutoff)
+    ].copy()
+    sub = sub.dropna(subset=["sst"], how="all").sort_values("date")
     sub["date"] = sub["date"].dt.strftime("%Y-%m-%d")
     keep = ["date", "sst", "salinity", "din", "dip", "do", "chl_a"]
     out = sub[[c for c in keep if c in sub.columns]]
     out = out.astype(object).where(out.notna(), None)
     return out.to_dict(orient="records")
+
+
+@app.get("/api/regions/{region}/realtime")
+def region_realtime(region: str, hours: int = 48):
+    """KMA ASOS 시간자료 (최근 hours 시간) + KHOA 가용성. 5분 캐시."""
+    if region not in REGIONS:
+        raise HTTPException(404, f"region '{region}' 없음")
+    return realtime_summary(region, hours=hours)
 
 
 @app.get("/api/regions/{region}/history")
