@@ -38,7 +38,17 @@
   .region .horizons { display: flex; gap: 8px; margin-top: 8px; font-size: 11px; color: var(--muted); }
   .region .horizons .h { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .region .horizons .pct { color: var(--text); font-weight: 600; font-size: 13px; }
-  main { display: grid; grid-template-rows: 1.1fr 0.95fr 0.95fr; gap: 12px; padding: 12px; overflow: hidden; }
+  main { display: grid; grid-template-rows: 1fr 0.85fr 0.85fr 0.85fr; gap: 10px; padding: 10px; overflow: hidden; }
+  .fish-grid { display: grid; grid-template-columns: 1fr 1.6fr; gap: 12px; flex: 1; min-height: 0; margin-top: 8px; }
+  .fish-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+  .fish-row { background: var(--panel-2); border-radius: 6px; padding: 8px 10px; display: grid; grid-template-columns: 70px 1fr 60px 60px; gap: 8px; align-items: center; cursor: pointer; transition: background 120ms; }
+  .fish-row:hover { background: #213057; }
+  .fish-row.active { outline: 1px solid var(--accent); }
+  .fish-row .ko { font-size: 13px; font-weight: 500; }
+  .fish-row .bar-bg { background: #0c1320; height: 8px; border-radius: 4px; overflow: hidden; }
+  .fish-row .bar-fill { height: 100%; transition: width 300ms ease-out; }
+  .fish-row .pct { font-size: 12px; text-align: right; color: var(--muted); }
+  .fish-row .lvl { font-size: 10px; padding: 2px 6px; border-radius: 999px; color: #0c1320; text-align: center; font-weight: 600; }
   .rt-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 8px; }
   .rt-kpis .k { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; text-align: center; }
   .rt-kpis .k .lbl { font-size: 11px; color: var(--muted); }
@@ -110,6 +120,19 @@
 
     <div class="panel">
       <div class="panel-head">
+        <h3>🎣 어종 출현 확률 <span class="small" style="font-weight: normal">(heuristic, 향후 KOSIS ML 교체)</span></h3>
+        <span class="small" id="fishMeta"></span>
+      </div>
+      <div class="fish-grid">
+        <div class="fish-list" id="fishList"></div>
+        <div class="chart-wrap">
+          <canvas id="chartFish"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
         <h3><span class="live-dot"></span>실시간 환경 (최근 48h, KMA ASOS)</h3>
         <span class="small" id="rtMeta"></span>
       </div>
@@ -132,7 +155,7 @@ const API = window.location.origin;
 const fmt = n => (n == null) ? '–' : (n*100).toFixed(0)+'%';
 const fmtTs = s => new Date(s).toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
 
-let map, markers = [], chart, chartRT, currentRegion = null, regionsCache = [], stationsCache = [];
+let map, markers = [], chart, chartRT, chartFish, currentRegion = null, currentSpecies = null, regionsCache = [], stationsCache = [];
 
 const REGION_CENTERS = {
   '경남서부': [34.82, 127.97],   // 남해-사천 사이 강진만/사천만 해상
@@ -251,13 +274,14 @@ async function selectRegion(region) {
     el.classList.toggle('active', el.dataset.region === region));
 
   try {
-    const [fc, obs, hist, rt] = await Promise.all([
+    const [fc, obs, hist, rt, fishNow] = await Promise.all([
       fetch(`${API}/api/regions/${encodeURIComponent(region)}/forecast`).then(r=>r.json()),
       fetch(`${API}/api/regions/${encodeURIComponent(region)}/observations?days=730`).then(r=>r.json()),
       fetch(`${API}/api/regions/${encodeURIComponent(region)}/history?days=730`).then(r=>r.json()),
       fetch(`${API}/api/regions/${encodeURIComponent(region)}/realtime?hours=48`).then(r=>r.json()),
+      fetch(`${API}/api/fish/regions/${encodeURIComponent(region)}/now`).then(r=>r.json()),
     ]);
-    console.log('[selectRegion]', region, 'obs rows:', obs.length, 'hist rows:', hist.length, 'rt rows:', rt.asos?.length);
+    console.log('[selectRegion]', region, 'obs:', obs.length, 'hist:', hist.length, 'rt:', rt.asos?.length, 'fish:', fishNow.species?.length);
 
     document.getElementById('forecastMeta').textContent = `발표 ${fmtTs(fc.issued_at)}`;
     document.getElementById('horizonCards').innerHTML = fc.horizons.map(h => `
@@ -270,10 +294,90 @@ async function selectRegion(region) {
 
     drawChart(obs, hist);
     drawRealtime(rt);
+    drawFish(fishNow);
   } catch (err) {
     console.error('[selectRegion FAIL]', region, err);
     document.getElementById('forecastMeta').textContent = `에러: ${err.message || err}`;
   }
+}
+
+function drawFish(data) {
+  const env = data.env || {};
+  document.getElementById('fishMeta').textContent =
+    env.sst != null ? `${data.region} · 환경 기준 ${data.as_of} · SST ${env.sst.toFixed(1)}°C, 염분 ${env.salinity?.toFixed(1)}` : `${data.region} · 환경 데이터 없음`;
+  const list = document.getElementById('fishList');
+  if (!data.species || data.species.length === 0) {
+    list.innerHTML = '<div class="small">환경 데이터 부족</div>';
+    return;
+  }
+  list.innerHTML = data.species.map((sp, i) => `
+    <div class="fish-row${currentSpecies===sp.id?' active':''}" data-species="${sp.id}">
+      <div class="ko">${sp.ko}</div>
+      <div class="bar-bg"><div class="bar-fill" style="width:${(sp.probability*100).toFixed(0)}%; background:${sp.color}"></div></div>
+      <div class="pct">${(sp.probability*100).toFixed(0)}%</div>
+      <span class="lvl" style="background:${sp.level_color}">${sp.level}</span>
+    </div>
+  `).join('');
+  // 첫 어종 자동 선택해 월별 곡선 표시
+  if (!currentSpecies || !data.species.find(s => s.id === currentSpecies)) {
+    currentSpecies = data.species[0].id;
+  }
+  drawFishSeasonal(data.region, currentSpecies);
+}
+
+let _fishListDelegated = false;
+function setupFishListDelegation() {
+  if (_fishListDelegated) return;
+  document.getElementById('fishList').addEventListener('click', (e) => {
+    const row = e.target.closest('.fish-row');
+    if (row && row.dataset.species && currentRegion) {
+      currentSpecies = row.dataset.species;
+      document.querySelectorAll('#fishList .fish-row').forEach(el =>
+        el.classList.toggle('active', el.dataset.species === currentSpecies));
+      drawFishSeasonal(currentRegion, currentSpecies);
+    }
+  });
+  _fishListDelegated = true;
+}
+
+async function drawFishSeasonal(region, speciesId) {
+  try {
+    const r = await fetch(`${API}/api/fish/regions/${encodeURIComponent(region)}/seasonal/${speciesId}`).then(x=>x.json());
+    if (chartFish) chartFish.destroy();
+    const ctx = document.getElementById('chartFish').getContext('2d');
+    const months = ['1','2','3','4','5','6','7','8','9','10','11','12'];
+    chartFish = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: months.map(m => `${m}월`),
+        datasets: [
+          { label: `${r.ko || speciesId} 출현 확률`, data: r.monthly_probability,
+            borderColor: '#4ea1ff', backgroundColor: 'rgba(78,161,255,0.18)', yAxisID: 'y',
+            pointRadius: 4, fill: true, tension: 0.3 },
+          { label: '월평균 SST', data: r.monthly_sst,
+            borderColor: '#ff6b6b', backgroundColor: '#ff6b6b', yAxisID: 'y2',
+            pointRadius: 2, borderWidth: 1, borderDash: [4,4], tension: 0.3 },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { labels: { color: '#cdd9ee', boxWidth: 12 } },
+          tooltip: { callbacks: {
+            label: c => c.dataset.yAxisID === 'y'
+              ? `${c.dataset.label}: ${(c.parsed.y*100).toFixed(0)}%`
+              : `${c.dataset.label}: ${c.parsed.y.toFixed(1)}°C`
+          } }
+        },
+        scales: {
+          x: { ticks: { color: '#8aa0c0' }, grid: { color: '#1f2a44' } },
+          y: { type: 'linear', position: 'left', min: 0, max: 1, title: { display: true, text: '확률', color: '#4ea1ff' },
+               ticks: { color: '#8aa0c0', callback: v => `${(v*100).toFixed(0)}%` }, grid: { color: '#1f2a44' } },
+          y2: { type: 'linear', position: 'right', title: { display: true, text: 'SST °C', color: '#ff6b6b' },
+                ticks: { color: '#8aa0c0' }, grid: { display: false } },
+        },
+      },
+    });
+  } catch (err) { console.error('[fish seasonal]', err); }
 }
 
 function drawRealtime(rt) {
@@ -382,6 +486,7 @@ async function refreshRealtimeAndForecast() {
   initMap();
   await loadAll();
   setupRegionListDelegation();
+  setupFishListDelegation();
   if (regionsCache.length) {
     const firstRegion = regionsCache[0].region;
     requestAnimationFrame(() => {

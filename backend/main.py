@@ -13,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from data_pipeline.features import build_features, load_koem_measurements
 from data_pipeline.labels import build_daily_labels
 from data_pipeline.realtime import realtime_summary
+import fish_model
+from fish_pipeline.species import SPECIES
 from data_pipeline.regions import REGIONS, STATION_TO_REGION
 from model_v2 import HORIZONS, RedTideRiskModel, risk_color, risk_level
 from stations import STATIONS, get_station
@@ -129,6 +131,57 @@ def region_observations(region: str, days: int = 730):
     out = out.astype(object).where(out.notna(), None)
     return out.to_dict(orient="records")
 
+
+# ============================================================
+# 어획 출현 모듈 (heuristic, 향후 KOSIS 라벨로 ML 교체)
+# ============================================================
+
+@app.get("/api/fish/species")
+def fish_species():
+    """7개 어종 메타데이터 + 모델 정보."""
+    return {
+        "model": fish_model.MODEL_INFO,
+        "species": [
+            {"id": s["id"], "ko": s["ko"], "sci": s["sci"],
+             "habitat": s["habitat"], "color": s["color"]}
+            for s in SPECIES
+        ],
+    }
+
+
+@app.get("/api/fish/regions/{region}/now")
+def fish_now(region: str):
+    """region 의 현재 시점 어종별 출현 확률 (가장 최근 환경 기준)."""
+    _load()
+    if region not in REGIONS:
+        raise HTTPException(404, f"region '{region}' 없음")
+    return fish_model.predict_now(region, _features)
+
+
+@app.get("/api/fish/regions/{region}/forecast")
+def fish_forecast(region: str, days: int = 7):
+    """region 의 향후 N일 어종별 출현 확률."""
+    _load()
+    if region not in REGIONS:
+        raise HTTPException(404, f"region '{region}' 없음")
+    return fish_model.forecast(region, _features, days=days)
+
+
+@app.get("/api/fish/regions/{region}/seasonal/{species_id}")
+def fish_seasonal(region: str, species_id: str):
+    """region × 특정 어종 월별 적합도 곡선 (1~12월)."""
+    _load()
+    if region not in REGIONS:
+        raise HTTPException(404, f"region '{region}' 없음")
+    sp = next((s for s in SPECIES if s["id"] == species_id), None)
+    if sp is None:
+        raise HTTPException(404, f"species '{species_id}' 없음")
+    return fish_model.seasonal_for_species(region, species_id, _features)
+
+
+# ============================================================
+# 적조 모듈
+# ============================================================
 
 @app.get("/api/regions/{region}/realtime")
 def region_realtime(region: str, hours: int = 48):
