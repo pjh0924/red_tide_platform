@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>적조예측 플랫폼 v2 · 한국 연안 광역해역 위험도</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  :root {
+    --bg: #0b1320; --panel: #131c2e; --panel-2: #1a2540;
+    --text: #e6eefb; --muted: #8aa0c0; --accent: #4ea1ff;
+    --safe: #2ecc71; --watch: #f1c40f; --warn: #e67e22; --danger: #e74c3c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font-family: 'Pretendard', -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif; background: var(--bg); color: var(--text); }
+  .app { display: grid; grid-template-columns: 380px 1fr; grid-template-rows: 56px 1fr; height: 100vh; }
+  header { grid-column: 1 / -1; display: flex; align-items: center; padding: 0 20px; background: var(--panel); border-bottom: 1px solid #1f2a44; gap: 16px; }
+  header h1 { font-size: 16px; margin: 0; }
+  .badges { display: flex; gap: 8px; margin-left: auto; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; background: var(--panel-2); padding: 4px 10px; border-radius: 999px; font-size: 12px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  aside { background: var(--panel); border-right: 1px solid #1f2a44; overflow-y: auto; padding: 16px; }
+  aside h2 { font-size: 12px; color: var(--muted); margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 1.2px; }
+  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .summary .card { background: var(--panel-2); border-radius: 8px; padding: 8px 10px; text-align: center; }
+  .summary .card .lbl { font-size: 11px; color: var(--muted); }
+  .summary .card .val { font-size: 18px; font-weight: 600; margin-top: 2px; }
+  .region-list { display: flex; flex-direction: column; gap: 6px; }
+  .region { background: var(--panel-2); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: background 120ms; border: 1px solid transparent; }
+  .region:hover { background: #213057; }
+  .region.active { border-color: var(--accent); }
+  .region .row1 { display: flex; align-items: center; gap: 10px; }
+  .region .name { flex: 1; font-size: 14px; font-weight: 500; }
+  .region .level { font-size: 11px; padding: 2px 8px; border-radius: 999px; color: #0c1320; font-weight: 600; }
+  .region .horizons { display: flex; gap: 8px; margin-top: 8px; font-size: 11px; color: var(--muted); }
+  .region .horizons .h { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .region .horizons .pct { color: var(--text); font-weight: 600; font-size: 13px; }
+  main { display: grid; grid-template-rows: 1fr 1fr; gap: 12px; padding: 12px; overflow: hidden; }
+  #map { border-radius: 12px; overflow: hidden; min-height: 240px; }
+  .panel { background: var(--panel); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; min-height: 0; }
+  .panel-head { display: flex; align-items: baseline; gap: 12px; }
+  .panel h3 { margin: 0; font-size: 14px; }
+  .small { color: var(--muted); font-size: 12px; }
+  .chart-wrap { flex: 1; min-height: 0; position: relative; margin-top: 8px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel-2); color: var(--text); }
+  .horizon-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; }
+  .horizon-cards .h { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; text-align: center; }
+  .horizon-cards .h .lbl { font-size: 11px; color: var(--muted); }
+  .horizon-cards .h .pct { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .horizon-cards .h .lvl { font-size: 11px; margin-top: 4px; padding: 2px 8px; border-radius: 999px; display: inline-block; color: #0c1320; }
+  .notice { background: #1d2942; border-left: 3px solid var(--accent); padding: 10px 12px; border-radius: 6px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>🌊 적조예측 플랫폼 v2 · 경남 연안 (서부·중부·동부)</h1>
+    <span class="small" id="issuedAt"></span>
+    <div class="badges">
+      <span class="badge"><span class="dot" style="background: var(--safe)"></span>안전 &lt;10%</span>
+      <span class="badge"><span class="dot" style="background: var(--watch)"></span>관심 &lt;30%</span>
+      <span class="badge"><span class="dot" style="background: var(--warn)"></span>주의보 &lt;60%</span>
+      <span class="badge"><span class="dot" style="background: var(--danger)"></span>경보 ≥60%</span>
+    </div>
+  </header>
+
+  <aside>
+    <h2>경남 연안 현황 (3 region)</h2>
+    <div class="summary" id="summary"></div>
+
+    <h2>광역해역별 위험도</h2>
+    <div class="region-list" id="regionList"></div>
+
+    <div class="notice" id="notice">
+      <strong>데이터 소스</strong>: 해양환경공단(KOEM) 측정망 + 기상청(KMA) ASOS + 국립수산과학원(NIFS) 적조속보.
+      모델 출력은 1/3/7일 후 적조 발생 확률(0~100%).
+    </div>
+  </aside>
+
+  <main>
+    <div id="map"></div>
+    <div class="panel">
+      <div class="panel-head">
+        <h3 id="forecastTitle">광역해역을 선택하세요</h3>
+        <span class="small" id="forecastMeta"></span>
+      </div>
+      <div class="horizon-cards" id="horizonCards"></div>
+      <div class="chart-wrap">
+        <canvas id="chart"></canvas>
+      </div>
+      <div class="legend">
+        <span><span class="dot" style="background: #4ea1ff"></span>SST (°C)</span>
+        <span><span class="dot" style="background: #f1c40f"></span>염분 (psu)</span>
+        <span><span class="dot" style="background: #2ecc71"></span>클로로필-a (µg/L)</span>
+        <span><span class="dot" style="background: var(--danger)"></span>NIFS 발생 이력</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const API = window.location.origin;
+const fmt = n => (n == null) ? '–' : (n*100).toFixed(0)+'%';
+const fmtTs = s => new Date(s).toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
+
+let map, markers = [], chart, currentRegion = null, regionsCache = [], stationsCache = [];
+
+const REGION_CENTERS = {
+  '경남서부': [34.82, 127.97],   // 남해-사천 사이 강진만/사천만 해상
+  '경남중부': [34.78, 128.50],   // 통영 남쪽 한산만/욕지도 외해
+  '경남동부': [35.30, 129.40],   // 부산-울산 사이 동해 외해
+};
+
+function initMap() {
+  // 경남 연안 8개 관측소가 모두 들어오는 영역으로 시작 (drawMap 에서 fitBounds)
+  map = L.map('map', { zoomControl: true, attributionControl: false, minZoom: 7, maxZoom: 13 })
+    .setView([35.05, 128.65], 10);
+  L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', { subdomains: 'abcd', maxZoom: 18 }).addTo(map);
+}
+
+function clearMarkers() { markers.forEach(m => map.removeLayer(m)); markers = []; }
+
+let initialFitDone = false;
+
+function drawMap() {
+  clearMarkers();
+  // 광역 region 큰 원
+  regionsCache.forEach(r => {
+    const c = REGION_CENTERS[r.region]; if (!c) return;
+    const p = (r.current_probability || 0);
+    const m = L.circleMarker(c, {
+      radius: 18 + p*30, color: '#000', weight: 1, fillColor: r.color, fillOpacity: 0.45
+    }).addTo(map);
+    m.bindTooltip(`${r.region} · ${fmt(p)} (${r.current_level})`, { direction:'top', offset:[0,-6] });
+    m.on('click', () => selectRegion(r.region));
+    markers.push(m);
+  });
+  // 가상 관측소 점
+  const stationMarkers = [];
+  stationsCache.forEach(s => {
+    const m = L.circleMarker([s.lat, s.lon], {
+      radius: 6, color: '#000', weight: 1, fillColor: s.color, fillOpacity: 0.95
+    }).addTo(map);
+    m.bindTooltip(`${s.name} (${s.region_assigned}) · ${s.current_level}`, { direction:'top', offset:[0,-4] });
+    m.on('click', () => selectRegion(s.region_assigned));
+    markers.push(m);
+    stationMarkers.push(m);
+  });
+  // 시작 화면: 모든 관측소 + region 중심이 들어오게 fit (한 번만)
+  if (!initialFitDone && stationMarkers.length > 0) {
+    const group = L.featureGroup(markers);
+    map.fitBounds(group.getBounds(), { padding: [50, 50], maxZoom: 11 });
+    initialFitDone = true;
+  }
+}
+
+async function loadAll() {
+  const [s, r, sum] = await Promise.all([
+    fetch(API+'/api/stations').then(r=>r.json()),
+    fetch(API+'/api/regions').then(r=>r.json()),
+    fetch(API+'/api/summary').then(r=>r.json()),
+  ]);
+  stationsCache = s; regionsCache = r;
+  renderSummary(sum);
+  renderRegionList();
+  drawMap();
+}
+
+function renderSummary(s) {
+  const el = document.getElementById('summary');
+  const colors = { '안전':'var(--safe)','관심':'var(--watch)','주의보':'var(--warn)','경보':'var(--danger)' };
+  el.innerHTML = Object.entries(s.regions).map(([k,v]) =>
+    `<div class="card"><div class="lbl"><span class="dot" style="background:${colors[k]};display:inline-block;margin-right:3px"></span>${k}</div><div class="val">${v}</div></div>`
+  ).join('');
+  document.getElementById('issuedAt').textContent = '발표 ' + new Date(s.issued_at + 'Z').toLocaleString('ko-KR');
+}
+
+async function renderRegionList() {
+  const el = document.getElementById('regionList');
+  const horizons_per_region = await Promise.all(regionsCache.map(async r => {
+    try {
+      const f = await fetch(`${API}/api/regions/${encodeURIComponent(r.region)}/forecast`).then(x=>x.json());
+      return f.horizons;
+    } catch { return []; }
+  }));
+  el.innerHTML = regionsCache.map((r, i) => `
+    <div class="region${currentRegion===r.region?' active':''}" data-region="${r.region}">
+      <div class="row1">
+        <div class="name">${r.region}</div>
+        <span class="level" style="background:${r.color}">${r.current_level}</span>
+      </div>
+      <div class="horizons">
+        ${horizons_per_region[i].map(h => `
+          <div class="h">
+            <span>+${h.horizon_days}d</span>
+            <span class="pct">${fmt(h.probability)}</span>
+          </div>`).join('')}
+      </div>
+    </div>
+  `).join('');
+  // 클릭 핸들러는 setupRegionListDelegation() 에서 한 번만 등록 (이벤트 위임).
+  // innerHTML 재설정 후에도 계속 작동하므로 여기서는 별도 등록 불필요.
+}
+
+let _regionListDelegated = false;
+function setupRegionListDelegation() {
+  if (_regionListDelegated) return;
+  document.getElementById('regionList').addEventListener('click', (e) => {
+    const card = e.target.closest('.region');
+    if (card && card.dataset.region) selectRegion(card.dataset.region);
+  });
+  _regionListDelegated = true;
+}
+
+async function selectRegion(region) {
+  console.log('[selectRegion]', region);
+  currentRegion = region;
+  document.getElementById('forecastTitle').textContent = `${region} · 향후 1/3/7일 적조 발생 확률`;
+  const c = REGION_CENTERS[region];
+  if (c) map.flyTo(c, 11, { duration: 0.6 });
+  document.querySelectorAll('#regionList .region').forEach(el =>
+    el.classList.toggle('active', el.dataset.region === region));
+
+  try {
+    const [fc, obs, hist] = await Promise.all([
+      fetch(`${API}/api/regions/${encodeURIComponent(region)}/forecast`).then(r=>r.json()),
+      fetch(`${API}/api/regions/${encodeURIComponent(region)}/observations?days=180`).then(r=>r.json()),
+      fetch(`${API}/api/regions/${encodeURIComponent(region)}/history?days=730`).then(r=>r.json()),
+    ]);
+    console.log('[selectRegion]', region, 'obs rows:', obs.length, 'hist rows:', hist.length);
+
+    document.getElementById('forecastMeta').textContent = `발표 ${fmtTs(fc.issued_at)}`;
+    document.getElementById('horizonCards').innerHTML = fc.horizons.map(h => `
+      <div class="h">
+        <div class="lbl">+${h.horizon_days}일</div>
+        <div class="pct">${fmt(h.probability)}</div>
+        <span class="lvl" style="background:${h.color}">${h.level}</span>
+      </div>
+    `).join('');
+
+    drawChart(obs, hist);
+  } catch (err) {
+    console.error('[selectRegion FAIL]', region, err);
+    document.getElementById('forecastMeta').textContent = `에러: ${err.message || err}`;
+  }
+}
+
+function drawChart(obs, hist) {
+  if (chart) chart.destroy();
+  const sst = obs.map(d => ({ x: d.date, y: d.sst })).filter(p => p.y != null);
+  const sal = obs.map(d => ({ x: d.date, y: d.salinity })).filter(p => p.y != null);
+  const chl = obs.map(d => ({ x: d.date, y: d.chl_a })).filter(p => p.y != null);
+  const blooms = hist.map(d => ({ x: d.date, y: 0 }));
+  const ctx = document.getElementById('chart').getContext('2d');
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [
+        { label: 'SST', data: sst, borderColor: '#4ea1ff', yAxisID: 'y1', pointRadius: 0, borderWidth: 1.8, tension: 0.25 },
+        { label: '염분', data: sal, borderColor: '#f1c40f', yAxisID: 'y2', pointRadius: 0, borderWidth: 1.5, tension: 0.25 },
+        { label: '클로로필-a', data: chl, borderColor: '#2ecc71', yAxisID: 'y3', pointRadius: 0, borderWidth: 1.5, tension: 0.25 },
+        { label: '적조 발생일', data: blooms, type: 'scatter', backgroundColor: '#e74c3c', pointRadius: 5, yAxisID: 'y4', showLine: false },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'nearest', intersect: false },
+      plugins: { legend: { labels: { color: '#cdd9ee', boxWidth: 12 } } },
+      scales: {
+        x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd' }, ticks: { color: '#8aa0c0' }, grid: { color: '#1f2a44' } },
+        y1: { type: 'linear', position: 'left', title: { display: true, text: 'SST (°C)', color: '#4ea1ff' }, ticks: { color: '#8aa0c0' }, grid: { color: '#1f2a44' } },
+        y2: { type: 'linear', position: 'right', title: { display: true, text: '염분', color: '#f1c40f' }, ticks: { color: '#8aa0c0' }, grid: { display: false } },
+        y3: { display: false, type: 'logarithmic', min: 0.1 },
+        y4: { display: false, min: -1, max: 1 },
+      },
+    },
+  });
+}
+
+(async function () {
+  initMap();
+  await loadAll();
+  setupRegionListDelegation();
+  // canvas / 사이드바 layout 이 안정화된 다음 frame 에 첫 region 선택
+  // → 처음부터 경남서부 차트가 그려진 상태로 표시됨
+  if (regionsCache.length) {
+    const firstRegion = regionsCache[0].region;  // REGIONS 순서: 경남서부 → 중부 → 동부
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => selectRegion(firstRegion));
+    });
+  }
+  setInterval(loadAll, 60_000);
+})();
+</script>
+</body>
+</html>

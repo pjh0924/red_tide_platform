@@ -1,0 +1,33 @@
+# Secrets — 절대 커밋 금지
+backend/.env
+*.env.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Logs / 중간 산출물
+*.log
+backend/artifacts/server.log
+backend/artifacts/forecaster.joblib   # v1 잔재
+backend/artifacts/history.parquet     # v1 잔재 (합성)
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Notebook
+.ipynb_checkpoints/
+
+# Copernicus 캐시
+~/.copernicusmarine/
