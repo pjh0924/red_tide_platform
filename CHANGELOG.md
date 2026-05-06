@@ -6,6 +6,26 @@
 - **MINOR**: 하위 호환되는 기능 추가 (UI 섹션 추가, 신규 엔드포인트 등)
 - **PATCH**: 하위 호환되는 버그·표시 수정
 
+## [1.2.0] - 2026-05-06
+
+어군 실시간 모니터링 인프라 1차 골격. 본 사업의 중심축이 적조에서 어군 사전 탐지로 재설정됨에 따라, 드론·AIS·1km 격자 라벨링까지 데이터 파이프라인 전체를 추가했다. 실제 드론 업체·AIS 라이선스 확보 전에도 파일 드롭 인제스트와 데모 생성기로 end-to-end 검증 가능.
+
+### 추가 (백엔드)
+- `backend/fetchers/drone.py` — 수상드론 어군 탐지 결과 수집. `DroneDetection` 스키마 + `artifacts/drone/incoming/` 파일 드롭 인제스트 + `load_detections()`/`list_missions()` 조회. 실시간 API 어댑터는 PoC 후 채울 스텁.
+- `backend/fetchers/ais.py` — AIS 어선 위치 데이터. `AISFix` 스키마 + 파일 드롭 + SOG 1~5kn 어업 활동 휴리스틱(`estimate_fishing_activity`) + 선박별 체류시간 요약. 실시간 소스 후보 4곳 문서화(해수부 어선위치정보·MarineTraffic·AISHub·AISStream).
+- `backend/data_pipeline/fish_grid.py` — 1×1km 격자 × 시간 단위 어군 밀도 라벨 빌더. `Zone` 정의 3곳(통영 욕지/남해 미조/거제 매물). 드론 + AIS 신호를 z-score 후 시그모이드로 합성한 `fish_density_score`(0~1).
+- `backend/generate_drone_ais_demo.py` — 7일치 드론 28미션·AIS 12척 합성 데이터 생성기.
+- FastAPI 엔드포인트: `/api/fish/zones`, `/api/drone/{ingest,missions,detections}`, `/api/ais/{ingest,fixes,dwell}`, `/api/fish/{density,monitoring/summary}`.
+
+### 추가 (프론트엔드)
+- 새 패널 **🚁 어군 실시간 모니터링**: PoC 어장 셀렉터 · 시간 범위 셀렉터(1h~7d) · KPI 4종(활성 미션·드론 탐지·어업 어선·핫스팟 점수) · 어종 분포 미니 바차트 · Top 5 핫스팟 격자 리스트.
+- 지도 오버레이: 선택 어장 bbox 사각형(점선) + 핫스팟 격자 빨간 원(밀도 점수 비례 크기). 핫스팟 클릭 시 지도가 해당 좌표로 이동.
+- 어종 코드 → 한국어 매핑(고등어/정어리/멸치/전갱이/삼치/가자미/조피볼락/미식별).
+- 5분 자동 갱신.
+
+### 변경
+- `.gitignore`에 `backend/artifacts/drone/`, `ais/`, `fish_density_*.parquet` 추가 (운영 데이터·데모 산출물 비커밋).
+
 ## [1.1.0] - 2026-05-06
 
 ### 변경

@@ -13,6 +13,9 @@ from fastapi.staticfiles import StaticFiles
 from data_pipeline.features import build_features, load_koem_measurements
 from data_pipeline.labels import build_daily_labels
 from data_pipeline.realtime import realtime_summary
+from data_pipeline import fish_grid
+from fetchers import drone as drone_mod
+from fetchers import ais as ais_mod
 import fish_model
 from fish_pipeline.species import SPECIES
 from data_pipeline.regions import REGIONS, STATION_TO_REGION
@@ -236,6 +239,178 @@ def summary():
         "regions": counts,
         "total_regions": len(rs),
         "total_stations": len(STATIONS),
+        "issued_at": datetime.utcnow().isoformat(),
+    }
+
+
+# ============================================================
+# 어군 모니터링 모듈 (드론 + AIS + 1km 격자 시간별 밀도)
+# ============================================================
+
+def _df_to_records(df: pd.DataFrame) -> list[dict]:
+    """JSON 직렬화 안전: NaN→None, datetime→isoformat."""
+    if df is None or df.empty:
+        return []
+    out = df.copy()
+    for c in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[c]):
+            out[c] = out[c].apply(lambda v: v.isoformat() if pd.notna(v) else None)
+    out = out.astype(object).where(out.notna(), None)
+    return out.to_dict(orient="records")
+
+
+@app.get("/api/fish/zones")
+def fish_zones():
+    """본 사업 1차 PoC 어장 정의(1×1km 격자 bbox 포함)."""
+    zones = fish_grid.list_zones()
+    return [
+        {
+            "id": z.id, "name": z.name, "region": z.region,
+            "bbox": {"lat_min": z.lat_min, "lon_min": z.lon_min,
+                     "lat_max": z.lat_max, "lon_max": z.lon_max},
+            "grid": dict(zip(("n_lat", "n_lon"), fish_grid.grid_size(z))),
+        }
+        for z in zones
+    ]
+
+
+@app.post("/api/drone/ingest")
+def drone_ingest():
+    """artifacts/drone/incoming/ 안의 파일을 통합. 운영 자동화 시 cron 또는 watchdog 으로 호출."""
+    rep = drone_mod.ingest_incoming()
+    return {
+        "files_seen": rep.files_seen, "rows_added": rep.rows_added,
+        "rows_rejected": rep.rows_rejected, "errors": rep.errors,
+        "consolidated_total": rep.consolidated_total,
+    }
+
+
+@app.get("/api/drone/missions")
+def drone_missions(hours: int = 168):
+    """최근 N시간 출항 미션 단위 요약."""
+    return _df_to_records(drone_mod.list_missions(hours=hours))
+
+
+@app.get("/api/drone/detections")
+def drone_detections(hours: int = 24, zone_id: str | None = None,
+                     species: str | None = None, min_confidence: float = 0.0,
+                     limit: int = 5000):
+    """드론 탐지 이벤트(최근 N시간). zone_id 지정 시 해당 어장 bbox 로 필터."""
+    bbox = None
+    if zone_id:
+        try:
+            z = fish_grid.get_zone(zone_id)
+            bbox = z.bbox
+        except KeyError:
+            raise HTTPException(404, f"zone '{zone_id}' 없음")
+    df = drone_mod.load_detections(
+        hours=hours, bbox=bbox, species=species, min_confidence=min_confidence,
+    )
+    if len(df) > limit:
+        df = df.tail(limit)
+    return _df_to_records(df)
+
+
+@app.post("/api/ais/ingest")
+def ais_ingest():
+    rep = ais_mod.ingest_incoming()
+    return {
+        "files_seen": rep.files_seen, "rows_added": rep.rows_added,
+        "rows_rejected": rep.rows_rejected, "errors": rep.errors,
+        "consolidated_total": rep.consolidated_total,
+    }
+
+
+@app.get("/api/ais/fixes")
+def ais_fixes(hours: int = 24, zone_id: str | None = None,
+              fishing_only: bool = True, limit: int = 5000):
+    """AIS 어선 위치(최근 N시간). 기본은 어선만."""
+    bbox = None
+    if zone_id:
+        try:
+            bbox = fish_grid.get_zone(zone_id).bbox
+        except KeyError:
+            raise HTTPException(404, f"zone '{zone_id}' 없음")
+    df = ais_mod.load_fixes(hours=hours, bbox=bbox, fishing_only=fishing_only)
+    if len(df) > limit:
+        df = df.tail(limit)
+    return _df_to_records(df)
+
+
+@app.get("/api/ais/dwell")
+def ais_dwell(hours: int = 24, zone_id: str | None = None):
+    """선박별 어업 추정 체류시간 요약."""
+    bbox = None
+    if zone_id:
+        try:
+            bbox = fish_grid.get_zone(zone_id).bbox
+        except KeyError:
+            raise HTTPException(404, f"zone '{zone_id}' 없음")
+    return _df_to_records(ais_mod.fishing_dwell_summary(hours=hours, bbox=bbox))
+
+
+@app.get("/api/fish/density")
+def fish_density(zone_id: str = "yokji_offshore", hours: int = 1,
+                 cell_km: float = 1.0):
+    """1×1km 격자 × 시간 단위 어군 밀도 라벨.
+
+    hours=1 이면 가장 최근 1시간 격자만 (대시보드용).
+    hours>1 이면 시간 범위 전체 빌드 (학습용).
+    """
+    try:
+        zone = fish_grid.get_zone(zone_id)
+    except KeyError:
+        raise HTTPException(404, f"zone '{zone_id}' 없음")
+    df = fish_grid.build_hourly_density(zone, hours=hours, cell_km=cell_km, save=False)
+    return {
+        "zone": {"id": zone.id, "name": zone.name, "region": zone.region,
+                 "bbox": list(zone.bbox)},
+        "cell_km": cell_km,
+        "hours": hours,
+        "rows": _df_to_records(df),
+    }
+
+
+@app.get("/api/fish/monitoring/summary")
+def fish_monitoring_summary(zone_id: str = "yokji_offshore", hours: int = 24):
+    """대시보드 KPI: 활성 미션·탐지수·어선수·격자 핫스팟."""
+    try:
+        zone = fish_grid.get_zone(zone_id)
+    except KeyError:
+        raise HTTPException(404, f"zone '{zone_id}' 없음")
+
+    det = drone_mod.load_detections(hours=hours, bbox=zone.bbox)
+    fixes = ais_mod.load_fixes(hours=hours, bbox=zone.bbox, fishing_only=True)
+    density = fish_grid.build_hourly_density(zone, hours=hours, cell_km=1.0, save=False)
+
+    top_cells = []
+    if not density.empty and "fish_density_score" in density.columns:
+        latest_hour = density["hour"].max()
+        last_slice = density[density["hour"] == latest_hour]
+        top = last_slice.nlargest(5, "fish_density_score")
+        top_cells = _df_to_records(top[[
+            "cell_id", "center_lat", "center_lon", "fish_density_score",
+            "drone_detection_count", "ais_fishing_vessels", "species_top",
+        ]])
+
+    species_counts: dict[str, int] = {}
+    if not det.empty:
+        species_counts = det["species"].value_counts().to_dict()
+
+    return {
+        "zone": {"id": zone.id, "name": zone.name, "region": zone.region},
+        "hours": hours,
+        "drone": {
+            "active_missions": int(det["mission_id"].nunique()) if not det.empty else 0,
+            "total_detections": int(len(det)),
+            "avg_confidence": round(float(det["confidence"].mean()), 3) if not det.empty else 0.0,
+            "species_counts": species_counts,
+        },
+        "ais": {
+            "vessel_count": int(fixes["mmsi"].nunique()) if not fixes.empty else 0,
+            "fix_count": int(len(fixes)),
+        },
+        "top_density_cells": top_cells,
         "issued_at": datetime.utcnow().isoformat(),
     }
 

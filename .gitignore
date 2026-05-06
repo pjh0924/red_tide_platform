@@ -17,6 +17,11 @@ backend/artifacts/server.log
 backend/artifacts/forecaster.joblib   # v1 잔재
 backend/artifacts/history.parquet     # v1 잔재 (합성)
 
+# 드론/AIS 인제스트 데이터 — 운영 시 외부 파일 드롭으로 생성 (소스가 아님)
+backend/artifacts/drone/
+backend/artifacts/ais/
+backend/artifacts/fish_density_*.parquet
+
 # OS
 .DS_Store
 Thumbs.db

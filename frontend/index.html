@@ -39,7 +39,7 @@
   .region .horizons { display: flex; gap: 8px; margin-top: 8px; font-size: 11px; color: var(--muted); }
   .region .horizons .h { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .region .horizons .pct { color: var(--text); font-weight: 600; font-size: 13px; }
-  main { display: grid; grid-template-rows: minmax(360px, auto) auto auto auto; gap: 10px; padding: 10px; }
+  main { display: grid; grid-template-rows: minmax(360px, auto) auto auto auto auto; gap: 10px; padding: 10px; }
   .fish-grid { display: grid; grid-template-columns: 1fr 1.6fr; gap: 12px; flex: 1; min-height: 260px; margin-top: 8px; }
   .fish-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
   .fish-row { background: var(--panel-2); border-radius: 6px; padding: 8px 10px; display: grid; grid-template-columns: 70px 1fr 60px 60px; gap: 8px; align-items: center; cursor: pointer; transition: background 120ms; }
@@ -77,6 +77,28 @@
   .info-title { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
   .info-desc { font-size: 11.5px; color: var(--muted); line-height: 1.55; }
   .info-desc strong { color: var(--accent); font-weight: 600; }
+  .mon-controls { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+  .mon-controls select, .mon-controls input { background: var(--panel-2); color: var(--text); border: 1px solid #2a3654; border-radius: 6px; padding: 6px 10px; font-size: 12px; }
+  .mon-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+  .mon-kpis .k { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; text-align: center; }
+  .mon-kpis .k .lbl { font-size: 11px; color: var(--muted); }
+  .mon-kpis .k .val { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .mon-kpis .k .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .mon-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; margin-top: 10px; }
+  .hotspot-list { display: flex; flex-direction: column; gap: 6px; }
+  .hotspot-row { background: var(--panel-2); border-radius: 6px; padding: 8px 10px; display: grid; grid-template-columns: 28px 1fr 70px 60px; gap: 8px; align-items: center; cursor: pointer; }
+  .hotspot-row:hover { background: #213057; }
+  .hotspot-row .rank { font-weight: 700; color: var(--accent); text-align: center; }
+  .hotspot-row .coords { font-size: 12px; color: var(--text); }
+  .hotspot-row .meta { font-size: 11px; color: var(--muted); }
+  .hotspot-row .score { font-size: 14px; font-weight: 600; text-align: right; }
+  .hotspot-row .sp { font-size: 10px; color: var(--muted); padding: 2px 6px; background: #0c1320; border-radius: 999px; text-align: center; }
+  .species-bars { display: flex; flex-direction: column; gap: 4px; }
+  .species-bars .sb { display: grid; grid-template-columns: 90px 1fr 50px; gap: 8px; align-items: center; font-size: 11px; }
+  .species-bars .ko { color: var(--text); }
+  .species-bars .bar-bg { background: #0c1320; height: 6px; border-radius: 3px; overflow: hidden; }
+  .species-bars .bar-fill { height: 100%; background: var(--accent); }
+  .species-bars .cnt { color: var(--muted); text-align: right; }
 </style>
 </head>
 <body>
@@ -175,6 +197,37 @@
 
     <div class="panel">
       <div class="panel-head">
+        <h3>🚁 어군 실시간 모니터링 <span class="small" style="font-weight:normal">(드론 + AIS + 1×1km 격자)</span></h3>
+        <span class="small" id="monMeta"></span>
+      </div>
+      <div class="mon-controls">
+        <label class="small">PoC 어장</label>
+        <select id="zoneSelect"></select>
+        <label class="small">시간</label>
+        <select id="zoneHours">
+          <option value="1">최근 1h</option>
+          <option value="6">최근 6h</option>
+          <option value="24" selected>최근 24h</option>
+          <option value="72">최근 72h</option>
+          <option value="168">최근 7d</option>
+        </select>
+        <span class="small" id="zoneInfo"></span>
+      </div>
+      <div class="mon-kpis" id="monKpis"></div>
+      <div class="mon-grid">
+        <div>
+          <div class="small" style="margin-bottom:6px">🔥 어군 밀도 핫스팟 Top 5 (격자 단위)</div>
+          <div class="hotspot-list" id="hotspotList"></div>
+        </div>
+        <div>
+          <div class="small" style="margin-bottom:6px">🐟 탐지 어종 분포</div>
+          <div class="species-bars" id="speciesBars"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
         <h3><span class="live-dot"></span>실시간 환경 (최근 48h, KMA ASOS)</h3>
         <span class="small" id="rtMeta"></span>
       </div>
@@ -198,6 +251,12 @@ const fmt = n => (n == null) ? '–' : (n*100).toFixed(0)+'%';
 const fmtTs = s => new Date(s).toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
 
 let map, markers = [], chart, chartRT, chartFish, currentRegion = null, currentSpecies = null, regionsCache = [], stationsCache = [];
+let monLayers = [], zonesCache = [], currentZone = null;
+const SPECIES_KO = {
+  mackerel: '고등어', sardine: '정어리', anchovy: '멸치',
+  horse_mackerel: '전갱이', spanish_mackerel: '삼치',
+  flatfish: '가자미', rockfish: '조피볼락', unknown: '미식별',
+};
 
 const REGION_CENTERS = {
   '경남서부': [34.82, 127.97],   // 남해-사천 사이 강진만/사천만 해상
@@ -520,6 +579,144 @@ function drawChart(obs, hist) {
   });
 }
 
+// ============================================================
+// 어군 모니터링
+// ============================================================
+async function loadZones() {
+  try {
+    zonesCache = await fetch(API + '/api/fish/zones').then(r => r.json());
+  } catch (e) { console.warn('[zones]', e); zonesCache = []; }
+  const sel = document.getElementById('zoneSelect');
+  sel.innerHTML = zonesCache.map(z =>
+    `<option value="${z.id}">${z.name} (${z.region})</option>`
+  ).join('');
+  if (zonesCache.length) {
+    currentZone = zonesCache[0].id;
+    sel.value = currentZone;
+    const z = zonesCache[0];
+    document.getElementById('zoneInfo').textContent =
+      `· 격자 ${z.grid.n_lat}×${z.grid.n_lon} (1×1km)`;
+  }
+  sel.addEventListener('change', () => {
+    currentZone = sel.value;
+    const z = zonesCache.find(x => x.id === currentZone);
+    if (z) document.getElementById('zoneInfo').textContent =
+      `· 격자 ${z.grid.n_lat}×${z.grid.n_lon} (1×1km)`;
+    refreshMonitoring();
+  });
+  document.getElementById('zoneHours').addEventListener('change', refreshMonitoring);
+}
+
+function clearMonLayers() {
+  monLayers.forEach(l => map.removeLayer(l));
+  monLayers = [];
+}
+
+async function refreshMonitoring() {
+  if (!currentZone) return;
+  const hours = parseInt(document.getElementById('zoneHours').value || '24', 10);
+  try {
+    const sum = await fetch(`${API}/api/fish/monitoring/summary?zone_id=${encodeURIComponent(currentZone)}&hours=${hours}`)
+      .then(r => r.json());
+    drawMonitoring(sum);
+    overlayZoneOnMap(sum);
+  } catch (e) {
+    console.error('[monitoring]', e);
+    document.getElementById('monMeta').textContent = '에러: ' + (e.message || e);
+  }
+}
+
+function drawMonitoring(s) {
+  document.getElementById('monMeta').textContent =
+    `${s.zone.name} · 발표 ${fmtTs(s.issued_at + 'Z')}`;
+
+  const top = (s.top_density_cells || []);
+  const topScore = top.length ? top[0].fish_density_score : 0;
+  const kpis = [
+    { lbl: '활성 미션', val: s.drone.active_missions, sub: `최근 ${s.hours}h` },
+    { lbl: '드론 탐지', val: s.drone.total_detections.toLocaleString(),
+      sub: `평균 신뢰도 ${(s.drone.avg_confidence*100).toFixed(0)}%` },
+    { lbl: '어업 어선', val: s.ais.vessel_count, sub: `AIS fix ${s.ais.fix_count.toLocaleString()}` },
+    { lbl: '핫스팟 점수', val: (topScore*100).toFixed(0) + '%',
+      sub: top.length ? `Top ${top.length}` : '데이터 없음' },
+  ];
+  document.getElementById('monKpis').innerHTML = kpis.map(k => `
+    <div class="k">
+      <div class="lbl">${k.lbl}</div>
+      <div class="val">${k.val}</div>
+      <div class="sub">${k.sub}</div>
+    </div>`).join('');
+
+  // 어종 분포
+  const sc = s.drone.species_counts || {};
+  const total = Object.values(sc).reduce((a, b) => a + b, 0) || 1;
+  const sorted = Object.entries(sc).sort((a, b) => b[1] - a[1]);
+  document.getElementById('speciesBars').innerHTML = sorted.length
+    ? sorted.map(([code, cnt]) => {
+        const ko = SPECIES_KO[code] || code;
+        const pct = (cnt / total * 100).toFixed(0);
+        return `<div class="sb"><div class="ko">${ko}</div>
+          <div class="bar-bg"><div class="bar-fill" style="width:${pct}%"></div></div>
+          <div class="cnt">${cnt} (${pct}%)</div></div>`;
+      }).join('')
+    : '<div class="small">탐지 데이터 없음. 드론 출항 또는 데모 데이터 인제스트 필요.</div>';
+
+  // 핫스팟 리스트
+  document.getElementById('hotspotList').innerHTML = top.length
+    ? top.map((c, i) => {
+        const ko = SPECIES_KO[c.species_top] || c.species_top || '-';
+        return `<div class="hotspot-row" data-lat="${c.center_lat}" data-lon="${c.center_lon}">
+          <div class="rank">${i+1}</div>
+          <div>
+            <div class="coords">${c.center_lat.toFixed(4)}, ${c.center_lon.toFixed(4)}</div>
+            <div class="meta">드론 ${c.drone_detection_count|0}건 · 어선 ${c.ais_fishing_vessels|0}척</div>
+          </div>
+          <div class="score">${(c.fish_density_score*100).toFixed(0)}%</div>
+          <div class="sp">${ko}</div>
+        </div>`;
+      }).join('')
+    : '<div class="small">핫스팟 데이터 없음.</div>';
+
+  // 핫스팟 클릭 → 지도 이동
+  document.querySelectorAll('#hotspotList .hotspot-row').forEach(el => {
+    el.addEventListener('click', () => {
+      const lat = parseFloat(el.dataset.lat), lon = parseFloat(el.dataset.lon);
+      if (!isNaN(lat) && !isNaN(lon)) map.flyTo([lat, lon], 12, { duration: 0.6 });
+    });
+  });
+}
+
+function overlayZoneOnMap(s) {
+  clearMonLayers();
+  const zone = zonesCache.find(z => z.id === s.zone.id);
+  if (!zone) return;
+  // bbox 사각형
+  const bbox = zone.bbox;
+  const rect = L.rectangle(
+    [[bbox.lat_min, bbox.lon_min], [bbox.lat_max, bbox.lon_max]],
+    { color: '#4ea1ff', weight: 1.5, fillOpacity: 0.06, fillColor: '#4ea1ff', dashArray: '6,4' }
+  ).addTo(map);
+  rect.bindTooltip(`${zone.name} (${zone.region}) PoC 어장`, { sticky: true });
+  monLayers.push(rect);
+
+  // 핫스팟 마커
+  (s.top_density_cells || []).forEach((c, i) => {
+    const m = L.circleMarker([c.center_lat, c.center_lon], {
+      radius: 9 + (c.fish_density_score * 12),
+      color: '#000', weight: 1,
+      fillColor: '#ff6b6b',
+      fillOpacity: 0.55,
+    }).addTo(map);
+    const ko = SPECIES_KO[c.species_top] || c.species_top || '-';
+    m.bindTooltip(
+      `Top ${i+1} · 점수 ${(c.fish_density_score*100).toFixed(0)}% · ${ko}<br>` +
+      `드론 ${c.drone_detection_count|0}건 · 어선 ${c.ais_fishing_vessels|0}척`,
+      { direction: 'top', offset: [0, -8] }
+    );
+    monLayers.push(m);
+  });
+}
+
 async function refreshRealtimeAndForecast() {
   if (!currentRegion) return;
   try {
@@ -555,6 +752,10 @@ async function refreshRealtimeAndForecast() {
   setInterval(loadAll, 60_000);
   // 실시간 데이터 + live 위험도: 5분마다 자동 갱신 (KMA ASOS hourly 와 캐시 TTL 일치)
   setInterval(refreshRealtimeAndForecast, 5 * 60 * 1000);
+  // 어군 모니터링: zones 로드 후 첫 zone 자동 조회, 5분마다 갱신
+  await loadZones();
+  await refreshMonitoring();
+  setInterval(refreshMonitoring, 5 * 60 * 1000);
 })();
 </script>
 </body>
