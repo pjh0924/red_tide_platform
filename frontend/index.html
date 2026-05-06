@@ -8,6 +8,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <style>
   :root {
     --bg: #0b1320; --panel: #131c2e; --panel-2: #1a2540;
@@ -155,7 +156,7 @@
         <span><span class="dot" style="background: #4ea1ff"></span>수온 (SST, °C)</span>
         <span><span class="dot" style="background: #f1c40f"></span>염분 (psu)</span>
         <span><span class="dot" style="background: #2ecc71"></span>클로로필-a (µg/L)</span>
-        <span><span class="dot" style="background: var(--danger)"></span>NIFS 발생 이력</span>
+        <span><span class="dot" style="background: rgba(231,76,60,0.45)"></span>NIFS 적조 발생 이력 (반투명 띠)</span>
       </div>
     </div>
 
@@ -475,7 +476,23 @@ function drawChart(obs, hist) {
   const sst = obs.map(d => ({ x: d.date, y: d.sst })).filter(p => p.y != null);
   const sal = obs.map(d => ({ x: d.date, y: d.salinity })).filter(p => p.y != null);
   const chl = obs.map(d => ({ x: d.date, y: d.chl_a })).filter(p => p.y != null);
-  const blooms = hist.map(d => ({ x: d.date, y: 0 }));
+
+  // 적조 발생일을 차트 전체 높이를 덮는 반투명 세로 띠(annotation box)로 표시.
+  // 동일 일자 내 중복 라벨이 있으면 한 번만 그린다.
+  const bloomDates = Array.from(new Set((hist || []).map(d => d.date)));
+  const bloomAnnotations = {};
+  bloomDates.forEach((d, i) => {
+    const start = new Date(d + 'T00:00:00');
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    bloomAnnotations['bloom_' + i] = {
+      type: 'box',
+      xMin: start.toISOString(),
+      xMax: end.toISOString(),
+      backgroundColor: 'rgba(231, 76, 60, 0.18)',
+      borderWidth: 0,
+    };
+  });
+
   const ctx = document.getElementById('chart').getContext('2d');
   chart = new Chart(ctx, {
     type: 'line',
@@ -484,19 +501,20 @@ function drawChart(obs, hist) {
         { label: '수온(SST)', data: sst, borderColor: '#4ea1ff', backgroundColor: '#4ea1ff', yAxisID: 'y1', pointRadius: 3, pointHoverRadius: 6, borderWidth: 1.5, tension: 0.2, spanGaps: true },
         { label: '염분', data: sal, borderColor: '#f1c40f', backgroundColor: '#f1c40f', yAxisID: 'y2', pointRadius: 3, pointHoverRadius: 6, borderWidth: 1.5, tension: 0.2, spanGaps: true },
         { label: '클로로필-a', data: chl, borderColor: '#2ecc71', backgroundColor: '#2ecc71', yAxisID: 'y3', pointRadius: 3, pointHoverRadius: 6, borderWidth: 1.5, tension: 0.2, spanGaps: true },
-        { label: '적조 발생일', data: blooms, type: 'scatter', backgroundColor: '#e74c3c', pointRadius: 5, yAxisID: 'y4', showLine: false },
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       interaction: { mode: 'nearest', intersect: false },
-      plugins: { legend: { labels: { color: '#cdd9ee', boxWidth: 12 } } },
+      plugins: {
+        legend: { labels: { color: '#cdd9ee', boxWidth: 12 } },
+        annotation: { annotations: bloomAnnotations },
+      },
       scales: {
         x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd' }, ticks: { color: '#8aa0c0' }, grid: { color: '#1f2a44' } },
         y1: { type: 'linear', position: 'left', title: { display: true, text: '수온 SST (°C)', color: '#4ea1ff' }, ticks: { color: '#8aa0c0' }, grid: { color: '#1f2a44' } },
         y2: { type: 'linear', position: 'right', title: { display: true, text: '염분', color: '#f1c40f' }, ticks: { color: '#8aa0c0' }, grid: { display: false } },
         y3: { display: false, type: 'logarithmic', min: 0.1 },
-        y4: { display: false, min: -1, max: 1 },
       },
     },
   });
