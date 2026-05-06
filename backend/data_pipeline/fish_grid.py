@@ -39,24 +39,25 @@ ARTIFACT_DIR = Path(__file__).parent.parent / "artifacts"
 DENSITY_PATH = ARTIFACT_DIR / "fish_density_hourly.parquet"
 
 # 본 사업 1차 PoC 어장 (통영 욕지도 외해 — 적조 빈발 + 어업 활성)
+# v1.3.1: 변 길이 절반(면적 1/4)으로 축소. 중심점은 유지하여 동일 해역 커버.
 DEFAULT_ZONES: list[dict] = [
     {
         "id": "yokji_offshore",
         "name": "통영 욕지도 외해",
         "region": "경남중부",
-        "bbox": (34.55, 128.20, 34.78, 128.55),  # (lat_min, lon_min, lat_max, lon_max)
+        "bbox": (34.6075, 128.2875, 34.7225, 128.4625),  # (lat_min, lon_min, lat_max, lon_max) ≈12.8×16km
     },
     {
         "id": "namhae_mijo",
         "name": "남해 미조 외해",
         "region": "경남서부",
-        "bbox": (34.55, 127.80, 34.78, 128.10),
+        "bbox": (34.6075, 127.875, 34.7225, 128.025),     # ≈12.8×13.6km
     },
     {
         "id": "geoje_maemul",
         "name": "거제 매물도 외해",
         "region": "경남중부",
-        "bbox": (34.55, 128.55, 34.78, 128.85),
+        "bbox": (34.6075, 128.625, 34.7225, 128.775),     # ≈12.8×13.6km
     },
 ]
 
