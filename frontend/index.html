@@ -99,6 +99,19 @@
   .species-bars .bar-bg { background: #0c1320; height: 6px; border-radius: 3px; overflow: hidden; }
   .species-bars .bar-fill { height: 100%; background: var(--accent); }
   .species-bars .cnt { color: var(--muted); text-align: right; }
+  .sim-controls { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 8px 10px; background: rgba(78,161,255,0.08); border: 1px dashed #4ea1ff; border-radius: 8px; font-size: 11px; flex-wrap: wrap; }
+  .sim-controls button { background: var(--panel-2); color: var(--text); border: 1px solid #2a3654; border-radius: 6px; padding: 5px 10px; cursor: pointer; font-size: 11px; }
+  .sim-controls button:hover { background: #213057; }
+  .sim-controls button.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .sim-controls select { background: var(--panel-2); color: var(--text); border: 1px solid #2a3654; border-radius: 6px; padding: 4px 6px; font-size: 11px; }
+  .sim-stat { color: var(--muted); }
+  .sim-stat strong { color: var(--text); }
+  @keyframes ping-expand { 0% { transform: scale(0.4); opacity: 0.9; } 100% { transform: scale(2.6); opacity: 0; } }
+  .leaflet-interactive.detect-ping { animation: ping-expand 1.4s ease-out forwards; transform-origin: center; transform-box: fill-box; }
+  .drone-icon { background: transparent !important; border: none !important; }
+  .drone-icon .body { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 10px rgba(78,161,255,.7), 0 0 3px rgba(0,0,0,.7); position: relative; }
+  .drone-icon .body::before { content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid rgba(78,161,255,.45); animation: ping-expand 2s ease-out infinite; }
+  .drone-icon .lbl { font-size: 9.5px; color: #cfe1ff; font-weight: 700; text-align: center; text-shadow: 0 0 4px #000, 0 1px 1px #000; margin-top: 1px; }
 </style>
 </head>
 <body>
@@ -212,6 +225,26 @@
           <option value="168">최근 7d</option>
         </select>
         <span class="small" id="zoneInfo"></span>
+      </div>
+      <div class="sim-controls" id="simControls">
+        <strong style="color:#cfe1ff">🎮 드론 시뮬레이션 (DEMO)</strong>
+        <button id="simStartBtn">▶ 시작</button>
+        <button id="simPauseBtn">⏸ 정지</button>
+        <button id="simResetBtn">🔄 리셋</button>
+        <label class="small">드론수</label>
+        <select id="simDroneCount">
+          <option>2</option><option selected>3</option><option>4</option><option>5</option>
+        </select>
+        <label class="small">속도</label>
+        <select id="simSpeed">
+          <option value="1">1×</option>
+          <option value="2" selected>2×</option>
+          <option value="4">4×</option>
+          <option value="8">8×</option>
+        </select>
+        <span class="sim-stat">⏱ <strong id="simTime">00:00</strong></span>
+        <span class="sim-stat">🚁 <strong id="simDrones">0</strong></span>
+        <span class="sim-stat">🐟 <strong id="simDetections">0</strong>건</span>
       </div>
       <div class="mon-kpis" id="monKpis"></div>
       <div class="mon-grid">
@@ -740,6 +773,179 @@ function overlayZoneOnMap(s) {
   });
 }
 
+// ====== 드론 시뮬레이터 (DEMO) ======
+const SIM = {
+  running: false, drones: [], layers: [], detections: 0,
+  startedAt: null, accumulatedMs: 0, bbox: null, hotspots: [],
+  timer: null, speed: 2, count: 3, lastZoneId: null,
+};
+const DRONE_COLORS = ['#4ea1ff', '#f1c40f', '#2ecc71', '#ff6b6b', '#b388ff'];
+const SIM_SPECIES_POOL = ['mackerel','sardine','anchovy','horse_mackerel','spanish_mackerel'];
+
+function simSetTime() {
+  const ms = SIM.accumulatedMs + (SIM.running && SIM.startedAt ? (Date.now()-SIM.startedAt) : 0);
+  const sec = Math.floor(ms/1000);
+  document.getElementById('simTime').textContent =
+    `${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;
+}
+
+function simClearLayers() {
+  SIM.layers.forEach(l => { try { map.removeLayer(l); } catch(e){} });
+  SIM.layers = []; SIM.drones = [];
+  document.getElementById('simDrones').textContent = '0';
+}
+
+function simReset() {
+  simPause();
+  simClearLayers();
+  SIM.detections = 0; SIM.accumulatedMs = 0; SIM.startedAt = null;
+  document.getElementById('simDetections').textContent = '0';
+  document.getElementById('simTime').textContent = '00:00';
+}
+
+function simPickWaypoint() {
+  const b = SIM.bbox;
+  if (SIM.hotspots.length && Math.random() < 0.7) {
+    const h = SIM.hotspots[Math.floor(Math.random()*SIM.hotspots.length)];
+    return { lat: h.lat + (Math.random()-0.5)*0.012, lon: h.lon + (Math.random()-0.5)*0.012 };
+  }
+  return {
+    lat: b.lat_min + Math.random()*(b.lat_max - b.lat_min),
+    lon: b.lon_min + Math.random()*(b.lon_max - b.lon_min),
+  };
+}
+
+function simSpawnDrones() {
+  simClearLayers();
+  const b = SIM.bbox;
+  for (let i = 0; i < SIM.count; i++) {
+    const color = DRONE_COLORS[i % DRONE_COLORS.length];
+    const lat = b.lat_min + (b.lat_max - b.lat_min) * (i + 0.5) / SIM.count;
+    const lon = b.lon_min + (b.lon_max - b.lon_min) * (0.1 + 0.05*i);
+    const html = `<div class="body" style="background: radial-gradient(circle at 30% 30%, #fff, ${color} 70%);"></div><div class="lbl">D${i+1}</div>`;
+    const icon = L.marker([lat, lon], {
+      icon: L.divIcon({ className: 'drone-icon', html, iconSize: [22, 30], iconAnchor: [11, 11] }),
+      interactive: false, zIndexOffset: 800,
+    }).addTo(map);
+    const trail = L.polyline([[lat, lon]], { color, weight: 2, opacity: 0.55, dashArray: '4,4' }).addTo(map);
+    SIM.drones.push({ id: i+1, color, lat, lon, target: simPickWaypoint(), trailPts: [[lat,lon]], icon, trail });
+    SIM.layers.push(icon, trail);
+  }
+  document.getElementById('simDrones').textContent = SIM.drones.length;
+}
+
+function simStart() {
+  if (!currentZone) { alert('PoC 어장을 먼저 선택하세요'); return; }
+  if (SIM.running) return;
+  const zone = zonesCache.find(z => z.id === currentZone);
+  if (!zone) return;
+  SIM.bbox = zone.bbox;
+  SIM.count = parseInt(document.getElementById('simDroneCount').value, 10);
+  SIM.speed = parseInt(document.getElementById('simSpeed').value, 10);
+  // load hotspots from latest summary cache
+  fetch(`${API}/api/fish/monitoring/summary?zone_id=${encodeURIComponent(currentZone)}&hours=24`)
+    .then(r => r.json()).then(s => {
+      SIM.hotspots = (s.top_density_cells || []).map(c => ({
+        lat: c.center_lat, lon: c.center_lon,
+        score: c.fish_density_score || 0.3,
+        species: c.species_top || 'unknown',
+      }));
+      // 만일 현재 zone이 바뀌었거나 드론이 없거나 zone_id 변경됐으면 재배치
+      if (SIM.lastZoneId !== currentZone || !SIM.drones.length) {
+        SIM.lastZoneId = currentZone;
+        simSpawnDrones();
+      }
+      SIM.running = true;
+      SIM.startedAt = Date.now();
+      document.getElementById('simStartBtn').classList.add('active');
+      document.getElementById('simPauseBtn').classList.remove('active');
+      if (SIM.timer) clearInterval(SIM.timer);
+      SIM.timer = setInterval(simStep, 200);
+    }).catch(err => { console.warn('[sim]', err); alert('시뮬레이션 시작 실패: ' + err.message); });
+}
+
+function simPause() {
+  if (SIM.running && SIM.startedAt) SIM.accumulatedMs += Date.now() - SIM.startedAt;
+  SIM.running = false; SIM.startedAt = null;
+  if (SIM.timer) { clearInterval(SIM.timer); SIM.timer = null; }
+  document.getElementById('simStartBtn').classList.remove('active');
+  document.getElementById('simPauseBtn').classList.add('active');
+}
+
+function simStep() {
+  if (!SIM.running) return;
+  simSetTime();
+  const stepDeg = 0.00022 * SIM.speed;
+  SIM.drones.forEach(d => {
+    let dLat = d.target.lat - d.lat, dLon = d.target.lon - d.lon;
+    const dist = Math.hypot(dLat, dLon);
+    if (dist < stepDeg * 1.5) { d.target = simPickWaypoint(); }
+    const norm = Math.max(dist, 1e-9);
+    d.lat += (dLat / norm) * stepDeg;
+    d.lon += (dLon / norm) * stepDeg;
+    d.icon.setLatLng([d.lat, d.lon]);
+    d.trailPts.push([d.lat, d.lon]);
+    if (d.trailPts.length > 60) d.trailPts.shift();
+    d.trail.setLatLngs(d.trailPts);
+    if (Math.random() < simDetectionProb(d.lat, d.lon)) simTriggerDetection(d);
+  });
+}
+
+function simDetectionProb(lat, lon) {
+  let p = 0.002;
+  for (const h of SIM.hotspots) {
+    const d = Math.hypot(h.lat - lat, h.lon - lon);
+    if (d < 0.02) p += h.score * 0.05 * (1 - d/0.02);
+  }
+  return Math.min(p, 0.15);
+}
+
+function simTriggerDetection(drone) {
+  SIM.detections++; document.getElementById('simDetections').textContent = SIM.detections;
+  // 가장 가까운 핫스팟의 어종 사용 (없으면 무작위)
+  let species = SIM_SPECIES_POOL[Math.floor(Math.random()*SIM_SPECIES_POOL.length)];
+  let bestD = 9, bestScore = 0;
+  for (const h of SIM.hotspots) {
+    const d = Math.hypot(h.lat - drone.lat, h.lon - drone.lon);
+    if (d < 0.02 && h.score > bestScore) { species = h.species; bestScore = h.score; bestD = d; }
+  }
+  const ko = SPECIES_KO[species] || species;
+  const conf = (0.55 + Math.random()*0.4).toFixed(2);
+  const ping = L.circle([drone.lat, drone.lon], {
+    radius: 280, color: '#ff6b6b', weight: 2, fill: true,
+    fillColor: '#ff6b6b', fillOpacity: 0.35, className: 'detect-ping',
+    interactive: false,
+  }).addTo(map);
+  setTimeout(() => { try { map.removeLayer(ping); } catch(e){} }, 1500);
+  // 작은 토스트 (지도 위 일시 라벨)
+  const labelStyle = 'background:rgba(231,76,60,.9);color:white;padding:3px 7px;border-radius:6px;font-size:11px;font-weight:600;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.5);';
+  const tag = L.marker([drone.lat, drone.lon], {
+    icon: L.divIcon({ className:'', html:`<div style="${labelStyle}">🐟 D${drone.id} · ${ko} ${conf}</div>`, iconSize:null, iconAnchor:[55, 28] }),
+    interactive: false, zIndexOffset: 900,
+  }).addTo(map);
+  setTimeout(() => { try { map.removeLayer(tag); } catch(e){} }, 1700);
+}
+
+function simAddBadge() {
+  const Badge = L.Control.extend({
+    onAdd: function() {
+      const div = L.DomUtil.create('div', '');
+      div.innerHTML = '🎮 DEMO · 시뮬레이션';
+      div.style.cssText = 'background:rgba(231,76,60,.85);color:white;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.4px;box-shadow:0 2px 8px rgba(0,0,0,.4);pointer-events:none;';
+      return div;
+    }
+  });
+  new Badge({ position: 'topright' }).addTo(map);
+}
+
+function simWireUp() {
+  document.getElementById('simStartBtn').addEventListener('click', simStart);
+  document.getElementById('simPauseBtn').addEventListener('click', simPause);
+  document.getElementById('simResetBtn').addEventListener('click', simReset);
+  // zone select 변경 시 자동 리셋
+  document.getElementById('zoneSelect').addEventListener('change', () => { simReset(); });
+}
+
 async function refreshRealtimeAndForecast() {
   if (!currentRegion) return;
   try {
@@ -779,6 +985,9 @@ async function refreshRealtimeAndForecast() {
   await loadZones();
   await refreshMonitoring();
   setInterval(refreshMonitoring, 5 * 60 * 1000);
+  // 드론 시뮬레이터
+  simAddBadge();
+  simWireUp();
 })();
 </script>
 </body>
