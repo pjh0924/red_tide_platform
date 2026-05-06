@@ -15,8 +15,8 @@
     --safe: #2ecc71; --watch: #f1c40f; --warn: #e67e22; --danger: #e74c3c;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; font-family: 'Pretendard', -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif; background: var(--bg); color: var(--text); }
-  .app { display: grid; grid-template-columns: 380px 1fr; grid-template-rows: 56px 1fr; height: 100vh; }
+  html, body { margin: 0; min-height: 100%; font-family: 'Pretendard', -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif; background: var(--bg); color: var(--text); }
+  .app { display: grid; grid-template-columns: 380px 1fr; grid-template-rows: 56px 1fr; min-height: 100vh; }
   header { grid-column: 1 / -1; display: flex; align-items: center; padding: 0 20px; background: var(--panel); border-bottom: 1px solid #1f2a44; gap: 16px; }
   header h1 { font-size: 16px; margin: 0; }
   .badges { display: flex; gap: 8px; margin-left: auto; }
@@ -38,8 +38,8 @@
   .region .horizons { display: flex; gap: 8px; margin-top: 8px; font-size: 11px; color: var(--muted); }
   .region .horizons .h { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .region .horizons .pct { color: var(--text); font-weight: 600; font-size: 13px; }
-  main { display: grid; grid-template-rows: 1fr 0.85fr 0.85fr 0.85fr; gap: 10px; padding: 10px; overflow: hidden; }
-  .fish-grid { display: grid; grid-template-columns: 1fr 1.6fr; gap: 12px; flex: 1; min-height: 0; margin-top: 8px; }
+  main { display: grid; grid-template-rows: minmax(360px, auto) auto auto auto; gap: 10px; padding: 10px; }
+  .fish-grid { display: grid; grid-template-columns: 1fr 1.6fr; gap: 12px; flex: 1; min-height: 260px; margin-top: 8px; }
   .fish-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
   .fish-row { background: var(--panel-2); border-radius: 6px; padding: 8px 10px; display: grid; grid-template-columns: 70px 1fr 60px 60px; gap: 8px; align-items: center; cursor: pointer; transition: background 120ms; }
   .fish-row:hover { background: #213057; }
@@ -56,12 +56,12 @@
   .rt-kpis .k .unit { font-size: 11px; color: var(--muted); margin-left: 2px; }
   .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; margin-right: 6px; animation: livePulse 1.5s infinite; vertical-align: middle; }
   @keyframes livePulse { 0%,100% { opacity:1; transform: scale(1); } 50% { opacity:.4; transform: scale(0.7); } }
-  #map { border-radius: 12px; overflow: hidden; min-height: 240px; }
-  .panel { background: var(--panel); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; min-height: 0; }
+  #map { border-radius: 12px; overflow: hidden; min-height: 360px; }
+  .panel { background: var(--panel); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; min-height: 320px; }
   .panel-head { display: flex; align-items: baseline; gap: 12px; }
   .panel h3 { margin: 0; font-size: 14px; }
   .small { color: var(--muted); font-size: 12px; }
-  .chart-wrap { flex: 1; min-height: 0; position: relative; margin-top: 8px; }
+  .chart-wrap { flex: 1; min-height: 240px; position: relative; margin-top: 8px; }
   .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 8px; }
   .legend span { display: inline-flex; align-items: center; gap: 4px; }
   .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel-2); color: var(--text); }
@@ -71,6 +71,11 @@
   .horizon-cards .h .pct { font-size: 22px; font-weight: 600; margin-top: 2px; }
   .horizon-cards .h .lvl { font-size: 11px; margin-top: 4px; padding: 2px 8px; border-radius: 999px; display: inline-block; color: #0c1320; }
   .notice { background: #1d2942; border-left: 3px solid var(--accent); padding: 10px 12px; border-radius: 6px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .info-block { display: flex; flex-direction: column; gap: 8px; }
+  .info-item { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; }
+  .info-title { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .info-desc { font-size: 11.5px; color: var(--muted); line-height: 1.55; }
+  .info-desc strong { color: var(--accent); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -97,6 +102,42 @@
       <strong>데이터 소스</strong>: 해양환경공단(KOEM) 측정망 + 기상청(KMA) ASOS + 국립수산과학원(NIFS) 적조속보.
       모델 출력은 1/3/7일 후 적조 발생 확률(0~100%).
     </div>
+
+    <h2>지표 설명</h2>
+    <div class="info-block">
+      <div class="info-item">
+        <div class="info-title">수온 (SST, 해수면 수온, °C)</div>
+        <div class="info-desc">바다 표층의 물 온도. SST는 Sea Surface Temperature의 약자로 일반적으로 말하는 "수온"과 같은 값이다. 코클로디니움·카레니아 같은 적조 원인 와편모조류는 <strong>20~28℃</strong> 범위에서 급증하므로 여름철 수온 상승은 적조의 1차 신호다.</div>
+      </div>
+      <div class="info-item">
+        <div class="info-title">염분 (Salinity, psu)</div>
+        <div class="info-desc">해수 1kg당 녹은 염류의 양(g). 정상 해수는 약 32~34psu이며, 장마·태풍 직후 담수 유입으로 떨어진다. <strong>저염분(28~31psu)</strong>은 영양염 유입과 함께 적조 종 증식을 촉진하는 조건이 된다.</div>
+      </div>
+      <div class="info-item">
+        <div class="info-title">클로로필-a (Chl-a, µg/L)</div>
+        <div class="info-desc">식물플랑크톤이 가진 광합성 색소. 즉 <strong>해수의 식물플랑크톤 총량을 대리하는 지표</strong>다. 평상시 1~3 µg/L에서 적조 발생기에는 10~50 µg/L까지 치솟으므로 적조 임박을 가장 직접적으로 보여준다.</div>
+      </div>
+      <div class="info-item">
+        <div class="info-title">기타 입력 (DIN/DIP/DO/pH + 기상)</div>
+        <div class="info-desc">질소·인 영양염(DIN/DIP)은 플랑크톤 먹이, 용존산소(DO)·pH는 수질 상태, 기상청 ASOS의 기온·풍속·일사·강수는 성층화·혼합과 광합성에 영향을 준다.</div>
+      </div>
+    </div>
+
+    <h2>AI 모델</h2>
+    <div class="info-block">
+      <div class="info-item">
+        <div class="info-title">HistGradientBoostingClassifier × 3 horizons</div>
+        <div class="info-desc">scikit-learn의 <strong>히스토그램 기반 그래디언트 부스팅</strong> 분류기. +1일·+3일·+7일 적조 발생 여부를 각각 예측하는 3개 모델을 따로 학습한다. 결측치를 그대로 학습에 사용할 수 있고 수만 건 표본에서도 빠르게 수렴해 본 데이터셋(KOEM 분기측정·NIFS 라벨)에 적합하다.</div>
+      </div>
+      <div class="info-item">
+        <div class="info-title">학습 데이터·기간</div>
+        <div class="info-desc">KOEM 7종(수온·염분·pH·DO·DIN·DIP·chl-a) + KMA ASOS 4종(일사·풍속·기온·강수) + 7/30일 이동평균 + 계절 변수. NIFS 적조속보를 (region, date) 라벨로 사용. 2023-01-01 이전을 학습, 이후를 검증으로 분리(<strong>chronological holdout</strong>)하고 <strong>walk-forward CV 5폴드</strong>로 미래 누설을 차단했다.</div>
+      </div>
+      <div class="info-item">
+        <div class="info-title">검증 성능 (AUROC)</div>
+        <div class="info-desc">+1일 0.85 / +3일 0.85 / +7일 0.87 (holdout). walk-forward CV 평균 0.74~0.78. 어종 출현 확률은 별도 휴리스틱(SST·염분·계절)으로 산출하며 향후 KOSIS 어획 통계 기반 ML로 교체 예정이다.</div>
+      </div>
+    </div>
   </aside>
 
   <main>
@@ -111,7 +152,7 @@
         <canvas id="chart"></canvas>
       </div>
       <div class="legend">
-        <span><span class="dot" style="background: #4ea1ff"></span>SST (°C)</span>
+        <span><span class="dot" style="background: #4ea1ff"></span>수온 (SST, °C)</span>
         <span><span class="dot" style="background: #f1c40f"></span>염분 (psu)</span>
         <span><span class="dot" style="background: #2ecc71"></span>클로로필-a (µg/L)</span>
         <span><span class="dot" style="background: var(--danger)"></span>NIFS 발생 이력</span>
@@ -440,7 +481,7 @@ function drawChart(obs, hist) {
     type: 'line',
     data: {
       datasets: [
-        { label: 'SST', data: sst, borderColor: '#4ea1ff', backgroundColor: '#4ea1ff', yAxisID: 'y1', pointRadius: 3, pointHoverRadius: 6, borderWidth: 1.5, tension: 0.2, spanGaps: true },
+        { label: '수온(SST)', data: sst, borderColor: '#4ea1ff', backgroundColor: '#4ea1ff', yAxisID: 'y1', pointRadius: 3, pointHoverRadius: 6, borderWidth: 1.5, tension: 0.2, spanGaps: true },
         { label: '염분', data: sal, borderColor: '#f1c40f', backgroundColor: '#f1c40f', yAxisID: 'y2', pointRadius: 3, pointHoverRadius: 6, borderWidth: 1.5, tension: 0.2, spanGaps: true },
         { label: '클로로필-a', data: chl, borderColor: '#2ecc71', backgroundColor: '#2ecc71', yAxisID: 'y3', pointRadius: 3, pointHoverRadius: 6, borderWidth: 1.5, tension: 0.2, spanGaps: true },
         { label: '적조 발생일', data: blooms, type: 'scatter', backgroundColor: '#e74c3c', pointRadius: 5, yAxisID: 'y4', showLine: false },
@@ -452,7 +493,7 @@ function drawChart(obs, hist) {
       plugins: { legend: { labels: { color: '#cdd9ee', boxWidth: 12 } } },
       scales: {
         x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd' }, ticks: { color: '#8aa0c0' }, grid: { color: '#1f2a44' } },
-        y1: { type: 'linear', position: 'left', title: { display: true, text: 'SST (°C)', color: '#4ea1ff' }, ticks: { color: '#8aa0c0' }, grid: { color: '#1f2a44' } },
+        y1: { type: 'linear', position: 'left', title: { display: true, text: '수온 SST (°C)', color: '#4ea1ff' }, ticks: { color: '#8aa0c0' }, grid: { color: '#1f2a44' } },
         y2: { type: 'linear', position: 'right', title: { display: true, text: '염분', color: '#f1c40f' }, ticks: { color: '#8aa0c0' }, grid: { display: false } },
         y3: { display: false, type: 'logarithmic', min: 0.1 },
         y4: { display: false, min: -1, max: 1 },
