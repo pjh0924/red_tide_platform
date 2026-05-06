@@ -269,6 +269,7 @@ function initMap() {
   map = L.map('map', { zoomControl: true, attributionControl: false, minZoom: 6, maxZoom: 13 })
     .setView([34.7, 127.9], 8);
   L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', { subdomains: 'abcd', maxZoom: 18 }).addTo(map);
+  L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 160 }).addTo(map);
 }
 
 function clearMarkers() { markers.forEach(m => map.removeLayer(m)); markers = []; }
@@ -696,8 +697,30 @@ function overlayZoneOnMap(s) {
     [[bbox.lat_min, bbox.lon_min], [bbox.lat_max, bbox.lon_max]],
     { color: '#4ea1ff', weight: 1.5, fillOpacity: 0.06, fillColor: '#4ea1ff', dashArray: '6,4' }
   ).addTo(map);
-  rect.bindTooltip(`${zone.name} (${zone.region}) PoC 어장`, { sticky: true });
+  // bbox 치수 계산 (km)
+  const sw = L.latLng(bbox.lat_min, bbox.lon_min);
+  const nw = L.latLng(bbox.lat_max, bbox.lon_min);
+  const se = L.latLng(bbox.lat_min, bbox.lon_max);
+  const heightKm = sw.distanceTo(nw) / 1000;
+  const widthKm = sw.distanceTo(se) / 1000;
+  rect.bindTooltip(
+    `${zone.name} (${zone.region}) PoC 어장<br>범위 ${widthKm.toFixed(1)} × ${heightKm.toFixed(1)} km · 격자 ${zone.grid.n_lat}×${zone.grid.n_lon} (1×1km)`,
+    { sticky: true }
+  );
   monLayers.push(rect);
+  // 가로/세로 km 라벨 (점선 박스 변 중앙)
+  const midLat = (bbox.lat_min + bbox.lat_max) / 2;
+  const midLon = (bbox.lon_min + bbox.lon_max) / 2;
+  const labelStyle = 'background:rgba(15,22,38,.78);border:1px solid #4ea1ff;color:#cfe1ff;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;';
+  const widthLabel = L.marker([bbox.lat_min, midLon], {
+    icon: L.divIcon({ className: '', html: `<div style="${labelStyle}">↔ ${widthKm.toFixed(1)} km</div>`, iconSize: null, iconAnchor: [40, -4] }),
+    interactive: false,
+  }).addTo(map);
+  const heightLabel = L.marker([midLat, bbox.lon_min], {
+    icon: L.divIcon({ className: '', html: `<div style="${labelStyle}">↕ ${heightKm.toFixed(1)} km</div>`, iconSize: null, iconAnchor: [70, 8] }),
+    interactive: false,
+  }).addTo(map);
+  monLayers.push(widthLabel, heightLabel);
 
   // 핫스팟 마커
   (s.top_density_cells || []).forEach((c, i) => {
